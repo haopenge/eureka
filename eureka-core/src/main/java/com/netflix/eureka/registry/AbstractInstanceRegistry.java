@@ -16,31 +16,6 @@
 
 package com.netflix.eureka.registry;
 
-import javax.annotation.Nullable;
-import java.net.MalformedURLException;
-import java.net.URL;
-import java.util.AbstractQueue;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Map.Entry;
-import java.util.Random;
-import java.util.Set;
-import java.util.Timer;
-import java.util.TimerTask;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
-
 import com.google.common.cache.CacheBuilder;
 import com.netflix.appinfo.InstanceInfo;
 import com.netflix.appinfo.InstanceInfo.ActionType;
@@ -58,6 +33,17 @@ import com.netflix.eureka.util.MeasuredRate;
 import com.netflix.servo.annotations.DataSourceType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import javax.annotation.Nullable;
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.util.*;
+import java.util.Map.Entry;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import static com.netflix.eureka.util.EurekaMonitors.*;
 
@@ -194,15 +180,20 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
         read.lock();
         try {
             Map<String, Lease<InstanceInfo>> gMap = registry.get(registrant.getAppName());
+
+            // 添加 注册次数到 监控
             REGISTER.increment(isReplication);
             if (gMap == null) {
                 final ConcurrentHashMap<String, Lease<InstanceInfo>> gNewMap = new ConcurrentHashMap<String, Lease<InstanceInfo>>();
+                // 添加应用
                 gMap = registry.putIfAbsent(registrant.getAppName(), gNewMap);
                 if (gMap == null) {
                     gMap = gNewMap;
                 }
             }
+            // 获取已存在的租约信息
             Lease<InstanceInfo> existingLease = gMap.get(registrant.getId());
+
             // Retain the last dirty timestamp without overwriting it, if there is already a lease
             if (existingLease != null && (existingLease.getHolder() != null)) {
                 Long existingLastDirtyTimestamp = existingLease.getHolder().getLastDirtyTimestamp();
@@ -228,14 +219,21 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
                 }
                 logger.debug("No previous lease information found; it is new registration");
             }
+
+            // 创建 租约
             Lease<InstanceInfo> lease = new Lease<InstanceInfo>(registrant, leaseDuration);
             if (existingLease != null) {
+                // 若租约已存在，设置 租约的开始服务时间戳
                 lease.setServiceUpTimestamp(existingLease.getServiceUpTimestamp());
             }
             gMap.put(registrant.getId(), lease);
+
+            // 添加到最近注册的调试队列
             recentRegisteredQueue.add(new Pair<Long, String>(
                     System.currentTimeMillis(),
                     registrant.getAppName() + "(" + registrant.getId() + ")"));
+
+            // 添加到 应用实例覆盖状态映射 （Eureka-Server 初始化使用）
             // This is where the initial state transfer of overridden status happens
             if (!InstanceStatus.UNKNOWN.equals(registrant.getOverriddenStatus())) {
                 logger.debug("Found overridden status {} for instance {}. Checking to see if needs to be add to the "
@@ -251,17 +249,23 @@ public abstract class AbstractInstanceRegistry implements InstanceRegistry {
                 registrant.setOverriddenStatus(overriddenStatusFromMap);
             }
 
+            // 获得应用实例最终状态，并设置实例的状态
             // Set the status based on the overridden status rules
             InstanceStatus overriddenInstanceStatus = getOverriddenInstanceStatus(registrant, existingLease, isReplication);
             registrant.setStatusWithoutDirty(overriddenInstanceStatus);
 
+            // 设置租约开始服务的时间戳（只有第一次有效）
             // If the lease is registered with UP status, set lease service up timestamp
             if (InstanceStatus.UP.equals(registrant.getStatus())) {
                 lease.serviceUp();
             }
+            // 设置应用实例的操作类型 为添加
             registrant.setActionType(ActionType.ADDED);
+            // 添加到 最近租约变更记录队列
             recentlyChangedQueue.add(new RecentlyChangedItem(lease));
+            // 设置 租约的最后更新时间戳
             registrant.setLastUpdatedTimestamp();
+            // 设置相应缓存 过期
             invalidateCache(registrant.getAppName(), registrant.getVIPAddress(), registrant.getSecureVipAddress());
             logger.info("Registered instance {}/{} with status {} (replication={})",
                     registrant.getAppName(), registrant.getId(), registrant.getStatus(), isReplication);

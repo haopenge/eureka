@@ -151,11 +151,14 @@ public class DiscoveryClient implements EurekaClient {
     private String appPathIdentifier;
 
     /**
-     *
+     * 应用实例状态变更监听器
      */
     private ApplicationInfoManager.StatusChangeListener statusChangeListener;
 
 
+    /**
+     * 应用示例信息复制器
+     */
     private InstanceInfoReplicator instanceInfoReplicator;
 
     private volatile int registrySize = 0;
@@ -1314,13 +1317,18 @@ public class DiscoveryClient implements EurekaClient {
                     heartbeatTask,
                     renewalIntervalInSecs, TimeUnit.SECONDS);
 
-            // InstanceInfo replicator
+            /**
+             * 创建 应用实例 信息复制器
+             */
             instanceInfoReplicator = new InstanceInfoReplicator(
                     this,
                     instanceInfo,
                     clientConfig.getInstanceInfoReplicationIntervalSeconds(),
                     2); // burstSize
 
+            /**
+             * 创建 应用实例 状态变更监听器
+             */
             statusChangeListener = new ApplicationInfoManager.StatusChangeListener() {
                 @Override
                 public String getId() {
@@ -1338,10 +1346,16 @@ public class DiscoveryClient implements EurekaClient {
                 }
             };
 
+            /**
+             * 注册 应用实例  状态变更监听器
+             */
             if (clientConfig.shouldOnDemandUpdateStatusChange()) {
                 applicationInfoManager.registerStatusChangeListener(statusChangeListener);
             }
 
+            /**
+             * 开启 应用实例信息复制器
+             */
             instanceInfoReplicator.start(clientConfig.getInitialInstanceInfoReplicationIntervalSeconds());
         } else {
             logger.info("Not registering with Eureka server per configuration");
@@ -1416,7 +1430,9 @@ public class DiscoveryClient implements EurekaClient {
      * isDirty flag on the instanceInfo is set to true
      */
     void refreshInstanceInfo() {
+        // 刷新 数据中心信息
         applicationInfoManager.refreshDataCenterInfoIfRequired();
+        // 刷新 租约信息
         applicationInfoManager.refreshLeaseInfoIfRequired();
 
         InstanceStatus status;

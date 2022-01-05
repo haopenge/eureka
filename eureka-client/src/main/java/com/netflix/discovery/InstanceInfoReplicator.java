@@ -29,13 +29,35 @@ class InstanceInfoReplicator implements Runnable {
     private static final Logger logger = LoggerFactory.getLogger(InstanceInfoReplicator.class);
 
     private final DiscoveryClient discoveryClient;
+
+    /**
+     * 应用实例信息
+     */
     private final InstanceInfo instanceInfo;
 
+    /**
+     *  定时执行频率，单位：秒
+     */
     private final int replicationIntervalSeconds;
+
+    /**
+     * 定时执行器
+     */
     private final ScheduledExecutorService scheduler;
+
+    /**
+     * 定时执行任务的 Futrue
+     */
     private final AtomicReference<Future> scheduledPeriodicRef;
 
+    /**
+     * 是否开启调度
+     */
     private final AtomicBoolean started;
+
+    /**
+     * 限流相关
+     */
     private final RateLimiter rateLimiter;
     private final int burstSize;
     private final int allowedRatePerMinute;
@@ -62,7 +84,9 @@ class InstanceInfoReplicator implements Runnable {
 
     public void start(int initialDelayMs) {
         if (started.compareAndSet(false, true)) {
+            // 设置 应用实例信息 数据不一致
             instanceInfo.setIsDirty();  // for initial register
+            // 提交任务，并设置该任务的 Future
             Future next = scheduler.schedule(this, initialDelayMs, TimeUnit.SECONDS);
             scheduledPeriodicRef.set(next);
         }
@@ -114,16 +138,21 @@ class InstanceInfoReplicator implements Runnable {
 
     public void run() {
         try {
+            // 刷新应用实例信息
             discoveryClient.refreshInstanceInfo();
 
+            // 判断应用实例信息 是否数据不一致
             Long dirtyTimestamp = instanceInfo.isDirtyWithTime();
             if (dirtyTimestamp != null) {
+                // 发起注册
                 discoveryClient.register();
+                // 设置 应用实例 数据一致
                 instanceInfo.unsetIsDirty(dirtyTimestamp);
             }
         } catch (Throwable t) {
             logger.warn("There was a problem with the instance info replicator", t);
         } finally {
+            // 提交任务 并设置该任务的 Future
             Future next = scheduler.schedule(this, replicationIntervalSeconds, TimeUnit.SECONDS);
             scheduledPeriodicRef.set(next);
         }
